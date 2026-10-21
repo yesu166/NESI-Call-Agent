@@ -2,7 +2,6 @@ const $ = (id) => document.getElementById(id);
 
 const statusPill = document.querySelector(".pill");
 const statusText = $("statusText");
-const statusDot = $("statusDot");
 const startBtn = $("startBtn");
 const stopBtn = $("stopBtn");
 const modeSelect = $("mode");
@@ -10,7 +9,6 @@ const languageSelect = $("language");
 const callerNameWrap = $("callerNameWrap");
 const callerNameInput = $("callerName");
 const transcript = $("transcript");
-const emptyState = $("emptyState");
 const textForm = $("textForm");
 const textInput = $("textInput");
 const sendTextBtn = $("sendTextBtn");
@@ -35,7 +33,6 @@ function setStatus(text, state = "ready") {
 
 function addMessage(speaker, text) {
   if (!text || !text.trim()) return;
-  if (emptyState?.isConnected) emptyState.remove();
   const existingEmpty = $("emptyState");
   if (existingEmpty) existingEmpty.remove();
 
@@ -275,13 +272,13 @@ modeSelect.addEventListener("change", () => {
 $("startBtn").addEventListener("click", startSession);
 $("stopBtn").addEventListener("click", endSession);
 $("clearBtn").addEventListener("click", () => {
-  transcript.innerHTML = "";
+  transcript.innerHTML = '<div id="emptyState" class="empty-state"><span class="sound-mark">〰</span><strong>Your conversation appears here</strong><span>Start a session and say hello.</span></div>';
   mergeSpeaker = null;
 });
 textForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const text = textInput.value.trim();
-  if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+  if (!text || !socket || socket.readyState !== WebSocket.OPEN || !connected) return;
   socket.send(JSON.stringify({ type: "text", text }));
   addMessage("you", text);
   textInput.value = "";
