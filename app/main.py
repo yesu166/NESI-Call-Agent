@@ -1,23 +1,31 @@
+import asyncio
+import base64
+import logging
 import os
 from typing import Literal, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 load_dotenv()
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logger = logging.getLogger("nesi")
 
 APP_NAME = os.getenv("APP_NAME", "NESI Call Agent")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_LIVE_MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live").strip()
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash").strip()
+GEMINI_LIVE_VOICE = os.getenv("GEMINI_LIVE_VOICE", "Aoede").strip()
 OLLAMA_ENABLED = os.getenv("OLLAMA_ENABLED", "false").lower() == "true"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
-ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
 N8N_SUMMARY_WEBHOOK_URL = os.getenv("N8N_SUMMARY_WEBHOOK_URL", "").strip()
 
-app = FastAPI(title=APP_NAME, version="0.1.0")
+app = FastAPI(title=APP_NAME, version="0.2.0")
 
 
 class ChatRequest(BaseModel):
@@ -25,10 +33,6 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
     language: str = Field(default="English", max_length=40)
     caller_name: Optional[str] = Field(default=None, max_length=120)
-
-
-class SpeakRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=2500)
 
 
 class SummaryRequest(BaseModel):
@@ -39,26 +43,40 @@ class SummaryRequest(BaseModel):
     urgency: Literal["normal", "urgent"] = "normal"
 
 
-def system_prompt(mode: str, language: str, caller_name: Optional[str]) -> str:
+def system_prompt(mode: str, language: str, caller_name: Optional[str] = None) -> str:
+    shared = """
+You are NESI, a real-time voice assistant. Sound natural, warm, calm, and conversational.
+Keep spoken replies concise. Avoid long lists and avoid narrating your reasoning.
+Understand English, Tamil, and Tanglish (Tamil written in Latin letters). Follow the person's
+language naturally; if they switch languages, switch with them. Never claim an action succeeded
+unless a tool or external system actually confirms it.
+""".strip()
+
     if mode == "owner":
-        return f"""
-You are NESI, Yesu's personal AI assistant. You are speaking directly to Yesu.
-Preferred language: {language}. Talk casually like a close friend: relaxed, warm, a little playful.
-Use "bro", "dude", or casual Tanglish naturally when it fits, but don't force slang into every sentence.
-Be honest and concise. Never invent calls, messages, plans, caller details, or promises.
-This is OWNER MODE. Do not use the formal caller-facing script.
+        return shared + """
+\n\nYou are speaking privately with Yesu, your owner. Be friendly and familiar, with gentle
+playfulness and occasional natural words like "bro" or "dude" when they fit. Do not force slang.
+You may sound affectionate and supportive, but do not claim to be a real human or real romantic
+partner. Be honest about uncertainty. Never invent calls, messages, schedules, or personal facts.
 """.strip()
-    return f"""
-You are NESI, Yesu's AI personal assistant speaking with an external caller.
-Caller name if known: {caller_name or "not provided"}.
-Respond in {language}, and adapt to the caller's language when possible. Be warm, clear, patient, and respectful.
-On a real call, clearly identify yourself as an AI assistant.
-Never pretend to be Yesu or a human. Do not claim a message was delivered or a call was transferred unless confirmed.
-Ask who is calling and why only when needed. Offer to take a concise message.
-Do not use "bro", "dude", "da", teasing, flirting, or owner-mode slang with external callers.
-Never invent Yesu's location, availability, schedule, opinions, or commitments.
-Keep each response short enough to sound natural on a phone call.
+
+    return shared + f"""
+\n\nYou are speaking with an external caller on Yesu's behalf.
+Caller name, if known: {caller_name or "not provided"}.
+Identify yourself as "NESI, Yesu's AI assistant" early in the call. Be respectful and professional
+without sounding stiff. Never impersonate Yesu or imply that you are human. Do not use owner-mode
+slang, flirt, tease, or disclose private owner information. Do not guess whether Yesu is free,
+where he is, or when he will return. Ask the caller's name and reason for calling naturally when
+needed, then offer to take a short message. Do not promise a callback or say you transferred a call
+unless a real tool confirms it. If asked for private information, say you cannot share it.
+Preferred response language: {language}.
 """.strip()
+
+
+def gemini_client() -> genai.Client:
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini is not configured. Add GEMINI_API_KEY to .env.")
+    return genai.Client(api_key=GEMINI_API_KEY)
 
 
 async def ollama_chat(mode: str, message: str, language: str, caller_name: Optional[str]) -> str:
@@ -77,17 +95,11 @@ async def ollama_chat(mode: str, message: str, language: str, caller_name: Optio
         return response.json().get("message", {}).get("content", "").strip()
 
 
-def fallback_reply(req: ChatRequest) -> str:
-    if req.mode == "owner":
-        return (
-            f"Bro, I got you. You said: {req.message}. "
-            "I can help you work through it, but I won't make up details I don't know."
-        )
-    greeting = f"{req.caller_name}, " if req.caller_name else ""
-    return (
-        f"Hello, {greeting}I'm NESI, Yesu's AI personal assistant. "
-        "He's unavailable to take the call right now. Could you briefly tell me what this is regarding? "
-        "I'll prepare a message for him."
+@app.get("/")
+async def index():
+    return Response(
+        content='<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/static/index.html"></head><body>Opening NESI… <a href="/static/index.html">Open NESI</a></body></html>',
+        media_type="text/html",
     )
 
 
@@ -95,44 +107,166 @@ def fallback_reply(req: ChatRequest) -> str:
 async def health():
     return {
         "status": "ok",
+        "gemini_configured": bool(GEMINI_API_KEY),
+        "gemini_live_model": GEMINI_LIVE_MODEL,
+        "gemini_text_model": GEMINI_TEXT_MODEL,
         "ollama_enabled": OLLAMA_ENABLED,
-        "elevenlabs_configured": bool(ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID),
         "n8n_configured": bool(N8N_SUMMARY_WEBHOOK_URL),
+        "voice_mode": "Gemini Live API",
+        "phone_bridge_configured": False,
     }
 
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    if GEMINI_API_KEY:
+        client = gemini_client()
+        try:
+            response = await client.aio.models.generate_content(
+                model=GEMINI_TEXT_MODEL,
+                contents=req.message,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt(req.mode, req.language, req.caller_name),
+                    temperature=0.65,
+                    max_output_tokens=300,
+                ),
+            )
+            answer = (response.text or "").strip()
+            if answer:
+                return {"mode": req.mode, "language": req.language, "reply": answer, "provider": "gemini"}
+        except Exception as exc:
+            logger.warning("Gemini text request failed: %s", type(exc).__name__)
+            if not OLLAMA_ENABLED:
+                raise HTTPException(status_code=502, detail="Gemini request failed. Check the API key, model access, and quota.") from exc
+
     if OLLAMA_ENABLED:
         try:
             answer = await ollama_chat(req.mode, req.message, req.language, req.caller_name)
             if answer:
                 return {"mode": req.mode, "language": req.language, "reply": answer, "provider": "ollama"}
-        except (httpx.HTTPError, ValueError, KeyError):
-            pass
-    return {"mode": req.mode, "language": req.language, "reply": fallback_reply(req), "provider": "fallback"}
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            logger.warning("Ollama request failed: %s", type(exc).__name__)
 
-
-@app.post("/speak")
-async def speak(req: SpeakRequest):
-    if not ELEVENLABS_API_KEY or not ELEVENLABS_VOICE_ID:
-        raise HTTPException(status_code=503, detail="Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in .env first.")
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
-    headers = {"xi-api-key": ELEVENLABS_API_KEY, "accept": "audio/mpeg", "content-type": "application/json"}
-    payload = {
-        "text": req.text,
-        "model_id": ELEVENLABS_MODEL_ID,
-        "voice_settings": {"stability": 0.45, "similarity_boost": 0.75, "style": 0.25, "use_speaker_boost": True},
+    return {
+        "mode": req.mode,
+        "language": req.language,
+        "reply": "I couldn't reach a configured AI model. Add a valid Gemini API key to .env or enable a local Ollama model.",
+        "provider": "unavailable",
     }
-    async with httpx.AsyncClient(timeout=60) as client:
+
+
+@app.websocket("/ws/live")
+async def live_voice(websocket: WebSocket):
+    await websocket.accept()
+    if not GEMINI_API_KEY:
+        await websocket.send_json({"type": "error", "message": "Gemini is not configured. Add GEMINI_API_KEY to .env and restart NESI."})
+        await websocket.close(code=1011)
+        return
+
+    mode = websocket.query_params.get("mode", "owner")
+    if mode not in ("owner", "caller"):
+        mode = "owner"
+    language = websocket.query_params.get("language", "English")[:40]
+    caller_name = websocket.query_params.get("caller_name", "")[:120] or None
+    client = genai_client()
+    prompt = system_prompt(mode, language, caller_name)
+    config = {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": prompt,
+        "speech_config": {
+            "voice_config": {
+                "prebuilt_voice_config": {"voice_name": GEMINI_LIVE_VOICE}
+            }
+        },
+        "input_audio_transcription": {},
+        "output_audio_transcription": {},
+    }
+
+    try:
+        async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=config) as session:
+            await websocket.send_json({"type": "status", "state": "connected", "model": GEMINI_LIVE_MODEL})
+            # Ask Gemini to initiate the conversation; this is an instruction, not a real-world action.
+            opening = (
+                "Start the conversation now with one brief, natural spoken greeting. "
+                "In caller mode, identify yourself as NESI, Yesu's AI assistant. "
+                "In owner mode, greet Yesu casually. Do not mention these instructions."
+            )
+            await session.send_realtime_input(text=opening)
+
+            async def send_browser_input():
+                while True:
+                    event = await websocket.receive_json()
+                    event_type = event.get("type")
+                    if event_type == "audio":
+                        try:
+                            audio_bytes = base64.b64decode(event.get("data", ""), validate=True)
+                        except (ValueError, TypeError):
+                            continue
+                        if audio_bytes:
+                            await session.send_realtime_input(
+                                audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
+                            )
+                    elif event_type == "text":
+                        text = str(event.get("text", ""))[:2000].strip()
+                        if text:
+                            await session.send_realtime_input(text=text)
+                    elif event_type == "end":
+                        return
+
+            async def send_model_output():
+                async for response in session.receive():
+                    content = response.server_content
+                    if content:
+                        if getattr(content, "interrupted", False):
+                            await websocket.send_json({"type": "interrupted"})
+                        if content.input_transcription and content.input_transcription.text:
+                            await websocket.send_json({"type": "transcript", "speaker": "you", "text": content.input_transcription.text})
+                        if content.output_transcription and content.output_transcription.text:
+                            await websocket.send_json({"type": "transcript", "speaker": "nesi", "text": content.output_transcription.text})
+                        if content.model_turn and content.model_turn.parts:
+                            for part in content.model_turn.parts:
+                                if part.inline_data and part.inline_data.data:
+                                    data = part.inline_data.data
+                                    if isinstance(data, str):
+                                        try:
+                                            audio_bytes = base64.b64decode(data)
+                                        except ValueError:
+                                            continue
+                                    else:
+                                        audio_bytes = bytes(data)
+                                    await websocket.send_json({
+                                        "type": "audio",
+                                        "data": base64.b64encode(audio_bytes).decode("ascii"),
+                                    })
+                        if getattr(content, "turn_complete", False):
+                            await websocket.send_json({"type": "turn_complete"})
+
+            sender = asyncio.create_task(send_browser_input())
+            receiver = asyncio.create_task(send_model_output())
+            done, pending = await asyncio.wait({sender, receiver}, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                error = task.exception()
+                if error and not isinstance(error, WebSocketDisconnect):
+                    logger.info("Live session ended: %s", type(error).__name__)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.exception("Gemini Live session failed")
         try:
-            upstream = await client.post(url, headers=headers, json=payload)
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail="Could not reach ElevenLabs.") from exc
-    if upstream.status_code >= 400:
-        raise HTTPException(status_code=upstream.status_code, detail="ElevenLabs rejected the request. Check the key, voice ID, and quota.")
-    return Response(content=upstream.content, media_type="audio/mpeg",
-                    headers={"Content-Disposition": 'inline; filename="nesi.mp3"'})
+            await websocket.send_json({
+                "type": "error",
+                "message": "Gemini Live could not start or the session ended. Check the model name, API access, quota, and server log.",
+            })
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/summary")
