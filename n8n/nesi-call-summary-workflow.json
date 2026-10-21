@@ -1,5 +1,3 @@
-# Import into n8n: Workflows > Import from File.
-# After importing, activate the workflow and copy the Production URL.
 {
   "name": "NESI - Receive Call Summary",
   "nodes": [
