@@ -1,0 +1,78 @@
+{
+  "name": "NESI - ElevenLabs Post-call Summary (Starter)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nesi-elevenlabs-post-call",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "nesi-elevenlabs-webhook",
+      "name": "Receive ElevenLabs Post-call Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "nesi-elevenlabs-post-call"
+    },
+    {
+      "parameters": {
+        "jsCode": "const root = $json.body ?? $json;\nconst data = root.data ?? root;\nconst transcript = data.transcript ?? data.conversation?.transcript ?? [];\nlet transcriptText = '';\nif (Array.isArray(transcript)) {\n  transcriptText = transcript.map((turn) => {\n    const role = turn.role ?? turn.speaker ?? 'speaker';\n    const text = turn.message ?? turn.text ?? turn.content ?? '';\n    return text ? role + ': ' + text : '';\n  }).filter(Boolean).join('\\n');\n} else if (typeof transcript === 'string') { transcriptText = transcript; }\nconst analysis = data.analysis ?? {};\nconst summary = analysis.transcript_summary ?? analysis.call_summary ?? data.summary ?? '';\nconst caller = data.caller_name ?? data.dynamic_variables?.caller_name ?? 'Unknown caller';\nconst conversationId = data.conversation_id ?? root.conversation_id ?? 'unknown';\nconst eventType = root.type ?? root.event_type ?? 'post_call';\nreturn [{ json: { received: true, event_type: eventType, conversation_id: conversationId, caller_name: caller, summary: summary || 'No generated summary was found; review the transcript.', transcript: transcriptText, raw_analysis: analysis, received_at: new Date().toISOString() } }];"
+      },
+      "id": "normalize-event",
+      "name": "Normalize Call Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { received: $json.received, conversation_id: $json.conversation_id } }}",
+        "options": {}
+      },
+      "id": "return-200",
+      "name": "Acknowledge Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Receive ElevenLabs Post-call Event": {
+      "main": [
+        [
+          {
+            "node": "Normalize Call Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Call Data": {
+      "main": [
+        [
+          {
+            "node": "Acknowledge Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
