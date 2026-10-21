@@ -2,7 +2,7 @@ name: NESI checks
 
 on:
   push:
-    branches: [main, gemini-live-mvp]
+    branches: [main, gemini-live-mvp, stability-and-project-identity]
   pull_request:
     branches: [main]
 
