@@ -49,3 +49,27 @@ def test_live_socket_explains_missing_gemini_key(monkeypatch):
         message = websocket.receive_json()
         assert message["type"] == "error"
         assert "GEMINI_API_KEY" in message["message"]
+
+
+
+def test_language_selection_uses_natural_auto_detect_instruction():
+    from app.main import system_prompt
+
+    prompt = system_prompt("caller", "Auto-detect / match caller")
+    assert "Match the other person's language naturally" in prompt
+    assert "Preferred response language: Auto-detect" not in prompt
+
+
+def test_caller_prompt_never_claims_message_is_saved():
+    from app.main import system_prompt
+
+    prompt = system_prompt("caller", "Tamil", "Test Caller")
+    assert "NESI, Yesu's AI assistant" in prompt
+    assert "Do not promise a callback" in prompt
+
+
+def test_static_assets_resolve_independent_of_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    response = client.get("/static/app.js")
+    assert response.status_code == 200
+    assert "startSession" in response.text
