@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11131a">
+  <title>NESI · Gemini Live</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="NESI home">
+        <span class="brand-mark">N</span>
+        <span><strong>NESI</strong><small>PERSONAL VOICE AGENT</small></span>
+      </a>
+      <span class="pill"><i id="statusDot"></i><span id="statusText">Ready to connect</span></span>
+    </header>
+
+    <section class="hero">
+      <div class="eyebrow"><span class="eyebrow-line"></span> GEMINI LIVE API · LOCAL PROTOTYPE</div>
+      <h1>Your voice.<br><em>Your assistant.</em></h1>
+      <p>Talk naturally with NESI. Interrupt her mid-sentence, switch languages, and keep the conversation flowing.</p>
+    </section>
+
+    <section class="console" aria-label="Voice agent controls">
+      <div class="console-head">
+        <div><span class="section-kicker">SESSION CONFIG</span><h2>Start a conversation</h2></div>
+        <span class="model-tag">GEMINI LIVE</span>
+      </div>
+      <div class="controls">
+        <label>Conversation mode
+          <select id="mode">
+            <option value="owner">Owner · casual with Yesu</option>
+            <option value="caller">Caller · respectful and clear</option>
+          </select>
+        </label>
+        <label>Preferred language
+          <select id="language">
+            <option>English</option>
+            <option>Tamil</option>
+            <option>Tanglish</option>
+            <option>Auto-detect / match caller</option>
+          </select>
+        </label>
+        <label id="callerNameWrap" class="hidden">Caller name (optional)
+          <input id="callerName" type="text" maxlength="120" placeholder="Name of the caller">
+        </label>
+      </div>
+      <div class="actions">
+        <button id="startBtn" class="primary"><span class="mic-icon">●</span> Start voice session</button>
+        <button id="stopBtn" class="secondary" disabled>End session</button>
+      </div>
+      <p class="hint"><strong>Tip:</strong> Use headphones to reduce speaker audio feeding back into the microphone. This is a browser prototype, not connected to your Airtel/Jio number.</p>
+    </section>
+
+    <section class="conversation">
+      <div class="conversation-head">
+        <div><span class="section-kicker">LIVE TRANSCRIPT</span><h2>Conversation</h2></div>
+        <button id="clearBtn" class="text-button" type="button">Clear</button>
+      </div>
+      <div id="transcript" class="transcript" aria-live="polite">
+        <div id="emptyState" class="empty-state"><span class="sound-mark">〰</span><strong>Your conversation appears here</strong><span>Start a session and say hello.</span></div>
+      </div>
+      <form id="textForm" class="text-form">
+        <input id="textInput" type="text" maxlength="2000" placeholder="Send a text message instead…" autocomplete="off" disabled>
+        <button id="sendTextBtn" type="submit" disabled>Send</button>
+      </form>
+    </section>
+
+    <footer><span>NESI · Built with Gemini Live</span><span>Local prototype · API key stays on the server</span></footer>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
