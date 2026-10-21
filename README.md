@@ -1,80 +1,89 @@
-# NESI Call Agent
+# NESI
 
-NESI is a Gemini-first personal voice assistant prototype for Yesu. The first milestone is a local browser voice session with live audio, multilingual conversation, and interruption support. It is **not yet connected to a real phone number**.
+**My personal AI voice agent, built around Gemini Live.**
 
-## Current architecture
+NESI is an experiment in making voice-first AI feel immediate and useful: low-latency conversation, natural turn-taking, multilingual speech, and a distinct personality depending on who is speaking.
 
-- **Gemini Live API:** real-time speech-to-speech, server-side session, audio streaming, and model-side turn detection.
-- **FastAPI:** keeps the Gemini API key on the server and proxies audio between the browser and Gemini.
-- **Browser UI:** captures microphone audio, sends mono PCM at 16 kHz, plays Gemini's 24 kHz PCM output, and clears queued playback on interruption events.
-- **Gemini text API:** backs the simple `POST /chat` endpoint.
-- **Optional Ollama:** local fallback for text chat only.
-- **n8n:** optional post-call summary webhook. It is not part of the live audio loop.
-- **Telephony:** not implemented yet. Airtel/Jio SIM forwarding requires a separate supported inbound call/SIP route and may incur charges.
+The current milestone is a **local browser voice prototype**. Phone-call routing is a separate piece of work and is not implemented yet.
 
-## Quick start (Windows)
+## What it does today
 
-Requires Python 3.10+ and a microphone. Use headphones for better echo control.
+- Streams microphone audio to the Gemini Live API and plays back generated speech.
+- Supports separate **Owner** and **Caller** conversation modes.
+- Includes English, Tamil, Tanglish, and language-matching options.
+- Displays input/output transcriptions when Gemini provides them.
+- Stops queued playback when Gemini reports an interruption.
+- Exposes a small FastAPI text endpoint, with optional Ollama fallback.
+- Can forward a manually supplied call-summary payload to an n8n webhook.
+
+## Stack
+
+| Layer | Technology |
+| --- | --- |
+| Live voice | Gemini Live API, Google GenAI Python SDK |
+| Backend | Python, FastAPI, WebSockets |
+| Interface | HTML, CSS, vanilla JavaScript, Web Audio API |
+| Optional local text model | Ollama |
+| Automation hook | n8n |
+
+## Architecture
+
+```text
+Browser microphone
+      │  PCM16, 16 kHz
+      ▼
+FastAPI WebSocket ─────► Gemini Live API
+      ▲                       │
+      └──── PCM audio ◄───────┘
+      │
+      └── Local transcript + playback UI
+
+FastAPI /summary ─────► Optional n8n webhook
+```
+
+The Gemini API key stays in the Python process. The browser only talks to the local FastAPI server.
+
+## Run locally
+
+Python 3.10+ is required. A microphone and a Gemini API key with Live API access are needed for voice sessions.
 
 ```powershell
-git clone https://github.com/yesu166/NESI-Call-Agent.git
-cd NESI-Call-Agent
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-1. Create a Gemini API key at https://aistudio.google.com/apikey.
-2. Put it in `.env` as `GEMINI_API_KEY=...`. Do not commit this file.
-3. Start the server:
+Set `GEMINI_API_KEY` in `.env`, then run:
 
 ```powershell
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-4. Open http://127.0.0.1:8000 and allow microphone access.
-5. Choose **Owner** to talk privately to NESI, or **Caller** to test the external-caller persona. Test English, Tamil, and Tanglish.
-6. Interrupt NESI while she is speaking to test barge-in.
+Open http://127.0.0.1:8000. Headphones are recommended to reduce microphone feedback.
 
-The Gemini Live model defaults to `gemini-3.8-live` and the text endpoint defaults to `gemini-2.5-flash`. If your AI Studio project does not have access to the configured Live model, set `GEMINI_LIVE_MODEL` to a Live API model available to your account. Current model names and access can change; see https://ai.google.dev/gemini-api/docs/models.
+The Live model is configurable with `GEMINI_LIVE_MODEL`; model availability depends on the Google AI project. Reference: [Gemini Live API](https://ai.google.dev/gemini-api/docs/live-api).
 
-## API endpoints
+## API surface
 
-- `GET /`: local voice interface.
-- `GET /health`: configuration status, never returns the API key.
-- `POST /chat`: text-only test endpoint.
-- `WS /ws/live?mode=owner&language=English`: browser-to-Gemini live audio bridge. Caller mode also accepts `caller_name`.
-- `POST /summary`: sends a validated summary payload to `N8N_SUMMARY_WEBHOOK_URL`, if configured.
+- `GET /` · local interface
+- `GET /health` · configuration status
+- `POST /chat` · text-only conversation
+- `WS /ws/live` · live audio/text session
+- `POST /summary` · optional n8n summary webhook
 
-Example text request:
+## Current boundaries
 
-```powershell
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/chat -ContentType "application/json" -Body '{"mode":"owner","language":"English","message":"Help me plan my day"}'
-```
+- No inbound/outbound phone calls, SIP, PSTN, or SIM call forwarding.
+- No persistent call history or automatic post-call transcription summary.
+- No authentication or rate limiting on the local WebSocket endpoint.
+- No end-to-end test against a real Gemini Live session in CI.
 
-## What is implemented
+This is an active prototype, not a production call-answering service. The app binds to localhost by default; it should not be exposed publicly until authentication, rate limiting, origin validation, and session lifecycle handling are hardened.
 
-- Gemini Live WebSocket session with native audio output.
-- Browser microphone capture and PCM audio conversion.
-- Live audio playback and transcript display.
-- Interruption event handling to stop queued playback.
-- Owner and external-caller prompts.
-- Text chat endpoint, health endpoint, optional Ollama text fallback, optional n8n summary POST.
+## Direction
 
-## Not implemented yet
-
-- Incoming or outgoing PSTN phone calls.
-- Airtel/Jio call forwarding, Indian phone number provisioning, or SIP bridge.
-- Persistent call history or automatic post-call transcript summarization.
-- Production authentication, rate limiting, and deployment hardening.
-- Automated integration tests against a real Gemini Live session.
-
-## Important security and cost notes
-
-- The API key stays in the backend `.env`; never place it in browser JavaScript or commit it.
-- This starter binds to localhost by default. **Do not expose the app publicly as-is**: the WebSocket endpoint has no user authentication or rate limiting yet.
-- Free API quotas, model availability, and data-use terms depend on Google's current AI Studio/Gemini API policies. Check them before sending sensitive caller information.
-- The local browser prototype is not an answer-to-SIM feature. Do not enable call forwarding until a compatible destination is verified and end-to-end tested.
-- NESI identifies itself as an AI assistant and must not impersonate Yesu or disclose private information.
+1. Stabilize live audio, interruption, and transcript behavior.
+2. Add deliberate session lifecycle and message-summary handling.
+3. Choose and test a compatible telephony/SIP provider.
+4. Add call history and explicit, consent-aware notification actions.

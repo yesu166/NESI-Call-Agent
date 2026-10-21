@@ -2,11 +2,12 @@ import asyncio
 import base64
 import logging
 import os
+from pathlib import Path
 from typing import Literal, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from google import genai
 from google.genai import types
@@ -26,8 +27,9 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip(
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
 N8N_SUMMARY_WEBHOOK_URL = os.getenv("N8N_SUMMARY_WEBHOOK_URL", "").strip()
 
-app = FastAPI(title=APP_NAME, version="0.2.0")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+BASE_DIR = Path(__file__).resolve().parent.parent
+app = FastAPI(title=APP_NAME, version="0.3.0")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
 class ChatRequest(BaseModel):
@@ -45,7 +47,17 @@ class SummaryRequest(BaseModel):
     urgency: Literal["normal", "urgent"] = "normal"
 
 
+def resolve_language(language: str) -> str:
+    normalized = language.strip().lower()
+    if normalized in {"auto-detect / match caller", "auto-detect", "auto", "match caller"}:
+        return "Match the other person's language naturally. Prioritize English, Tamil, and Tanglish; switch when they switch."
+    if normalized in {"tanglish", "tamil english"}:
+        return "Tanglish (Tamil spoken naturally with English words, using Latin script when appropriate)."
+    return language.strip() or "English"
+
+
 def system_prompt(mode: str, language: str, caller_name: Optional[str] = None) -> str:
+    language_instruction = resolve_language(language)
     shared = """
 You are NESI, a real-time voice assistant. Sound natural, warm, calm, and conversational.
 Keep spoken replies concise. Avoid long lists and avoid narrating your reasoning.
@@ -69,9 +81,8 @@ Identify yourself as "NESI, Yesu's AI assistant" early in the call. Be respectfu
 without sounding stiff. Never impersonate Yesu or imply that you are human. Do not use owner-mode
 slang, flirt, tease, or disclose private owner information. Do not guess whether Yesu is free,
 where he is, or when he will return. Ask the caller's name and reason for calling naturally when
-needed, then offer to take a short message. Do not promise a callback or say you transferred a call
-unless a real tool confirms it. If asked for private information, say you cannot share it.
-Preferred response language: {language}.
+needed, then offer to listen to a short message. You may repeat it back in the conversation, but this build has no durable message storage or delivery tool. Never say you saved, sent, or passed it on. Do not promise a callback or say you transferred a call unless a real tool confirms it. If asked for private information, say you cannot share it.
+Preferred response language: {language_instruction}.
 """.strip()
 
 
@@ -99,10 +110,8 @@ async def ollama_chat(mode: str, message: str, language: str, caller_name: Optio
 
 @app.get("/")
 async def index():
-    return Response(
-        content='<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/static/index.html"></head><body>Opening NESI… <a href="/static/index.html">Open NESI</a></body></html>',
-        media_type="text/html",
-    )
+    from fastapi.responses import FileResponse
+    return FileResponse(BASE_DIR / "static" / "index.html")
 
 
 @app.get("/health")
@@ -200,8 +209,11 @@ async def live_voice(websocket: WebSocket):
                     event = await websocket.receive_json()
                     event_type = event.get("type")
                     if event_type == "audio":
+                        encoded_audio = event.get("data", "")
+                        if not isinstance(encoded_audio, str) or len(encoded_audio) > 100_000:
+                            continue
                         try:
-                            audio_bytes = base64.b64decode(event.get("data", ""), validate=True)
+                            audio_bytes = base64.b64decode(encoded_audio, validate=True)
                         except (ValueError, TypeError):
                             continue
                         if audio_bytes:
@@ -209,7 +221,10 @@ async def live_voice(websocket: WebSocket):
                                 audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
                             )
                     elif event_type == "text":
-                        text = str(event.get("text", ""))[:2000].strip()
+                        raw_text = event.get("text", "")
+                        if not isinstance(raw_text, str):
+                            continue
+                        text = raw_text[:2000].strip()
                         if text:
                             await session.send_realtime_input(text=text)
                     elif event_type == "end":
@@ -250,6 +265,8 @@ async def live_voice(websocket: WebSocket):
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
             for task in done:
+                if task.cancelled():
+                    continue
                 error = task.exception()
                 if error and not isinstance(error, WebSocketDisconnect):
                     logger.info("Live session ended: %s", type(error).__name__)
