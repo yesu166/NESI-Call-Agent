@@ -87,3 +87,7 @@ This is an active prototype, not a production call-answering service. The app bi
 2. Add deliberate session lifecycle and message-summary handling.
 3. Choose and test a compatible telephony/SIP provider.
 4. Add call history and explicit, consent-aware notification actions.
+
+## Project brief
+
+For the project's purpose, scope, current maturity, proposed roadmap, limitations, and collaboration opportunities, see [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
