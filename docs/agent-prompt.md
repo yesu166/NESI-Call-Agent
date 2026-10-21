@@ -1,6 +1,6 @@
-# NESI system prompt
+# NESI conversation design
 
-Use this prompt as the behavioral source for the Gemini Live agent. The app currently builds the mode-specific prompt in `app/main.py`; keep changes there and here consistent.
+This document defines NESI's intended voice and boundaries. The runtime prompt is assembled in `app/main.py`; this file is the behavior specification used when refining it.
 
 ## Shared identity
 
