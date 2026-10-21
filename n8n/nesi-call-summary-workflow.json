@@ -1,0 +1,53 @@
+# Import into n8n: Workflows > Import from File.
+# After importing, activate the workflow and copy the Production URL.
+{
+  "name": "NESI - Receive Call Summary",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nesi-call-summary",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "nesi-webhook",
+      "name": "Receive NESI Summary",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "nesi-call-summary"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst caller = body.caller_name || 'Unknown caller';\nconst urgency = body.urgency || 'normal';\nconst reason = body.reason || 'No message supplied';\nconst language = body.language || 'Unknown';\nconst number = body.caller_number || 'Not provided';\nconst summary = `NESI call summary\\nCaller: ${caller}\\nNumber: ${number}\\nLanguage: ${language}\\nUrgency: ${urgency.toUpperCase()}\\nReason: ${reason}`;\nreturn [{ json: { ok: true, received: true, summary, caller_name: caller, urgency } }];"
+      },
+      "id": "format-summary",
+      "name": "Format Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: $json.ok, received: $json.received, summary: $json.summary } }}",
+        "options": {}
+      },
+      "id": "return-receipt",
+      "name": "Return Receipt",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [760, 300]
+    }
+  ],
+  "connections": {
+    "Receive NESI Summary": {
+      "main": [[{ "node": "Format Summary", "type": "main", "index": 0 }]]
+    },
+    "Format Summary": {
+      "main": [[{ "node": "Return Receipt", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}
