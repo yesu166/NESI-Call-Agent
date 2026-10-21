@@ -26,7 +26,7 @@ def test_home_and_voice_interface_are_served():
     home = client.get("/")
     ui = client.get("/static/index.html")
     assert home.status_code == 200
-    assert "/static/index.html" in home.text
+    assert "NESI · Gemini Live" in home.text
     assert ui.status_code == 200
     assert "NESI" in ui.text
     assert "Start voice session" in ui.text
