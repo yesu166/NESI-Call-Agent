@@ -25,6 +25,7 @@ let nextPlaybackTime = 0;
 let activeSources = new Set();
 let connected = false;
 let sessionStarting = false;
+let mergeSpeaker = null;
 
 function setStatus(text, state = "ready") {
   statusText.textContent = text;
@@ -40,11 +41,12 @@ function addMessage(speaker, text) {
 
   const key = speaker === "nesi" ? "nesi" : "you";
   const last = transcript.lastElementChild;
-  // Gemini can emit transcription in small fragments; merge adjacent fragments from the same speaker.
-  if (last && last.classList.contains("message") && last.dataset.speaker === key) {
+  // Gemini may emit cumulative or incremental transcription fragments within one turn.
+  if (mergeSpeaker === key && last && last.classList.contains("message") && last.dataset.speaker === key) {
     const body = last.querySelector(".message-body");
     const old = body.textContent;
-    if (!old.endsWith(text)) body.textContent = old + text;
+    if (text.startsWith(old)) body.textContent = text;
+    else if (!old.startsWith(text)) body.textContent = old + text;
     transcript.scrollTop = transcript.scrollHeight;
     return;
   }
@@ -60,6 +62,7 @@ function addMessage(speaker, text) {
   body.textContent = text;
   wrapper.append(meta, body);
   transcript.appendChild(wrapper);
+  mergeSpeaker = key;
   transcript.scrollTop = transcript.scrollHeight;
 }
 
@@ -233,9 +236,11 @@ async function startSession() {
     } else if (message.type === "transcript") {
       addMessage(message.speaker, message.text);
     } else if (message.type === "interrupted") {
+      mergeSpeaker = null;
       stopPlayback();
       setStatus("You interrupted NESI", "connected");
     } else if (message.type === "turn_complete") {
+      mergeSpeaker = null;
       setStatus("Connected · listening", "connected");
     } else if (message.type === "error") {
       setStatus("Connection error", "error");
@@ -271,6 +276,7 @@ $("startBtn").addEventListener("click", startSession);
 $("stopBtn").addEventListener("click", endSession);
 $("clearBtn").addEventListener("click", () => {
   transcript.innerHTML = "";
+  mergeSpeaker = null;
 });
 textForm.addEventListener("submit", (event) => {
   event.preventDefault();
